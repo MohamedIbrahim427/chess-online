@@ -5,11 +5,7 @@ import logging
 import os
 import sys
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s %(levelname)s %(message)s',
-    stream=sys.stdout
-)
+logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 logger = logging.getLogger(__name__)
 
 PORT = int(os.environ.get("PORT", 8765))
@@ -19,24 +15,19 @@ active_games = {}
 player_games = {}
 
 
-async def handle_client(websocket):
+async def handle_client(websocket, path=None):
     global waiting_player
-    logger.info("New connection")
+    logger.info(f"New connection on port {PORT}")
 
     try:
         async for message in websocket:
-            try:
-                data = json.loads(message)
-            except json.JSONDecodeError:
-                continue
-
+            data = json.loads(message)
             msg_type = data.get("type")
 
             if msg_type == "find_game":
                 if waiting_player is None or waiting_player == websocket:
                     waiting_player = websocket
                     await websocket.send(json.dumps({"type": "waiting"}))
-                    logger.info("Player waiting...")
                 else:
                     opponent = waiting_player
                     waiting_player = None
@@ -46,40 +37,27 @@ async def handle_client(websocket):
                     player_games[id(websocket)] = game_id
                     await opponent.send(json.dumps({"type": "game_start", "color": "w"}))
                     await websocket.send(json.dumps({"type": "game_start", "color": "b"}))
-                    logger.info(f"Game started: {game_id}")
+                    logger.info("Game started!")
 
             elif msg_type == "move":
                 game_id = player_games.get(id(websocket))
-                if not game_id:
-                    continue
                 game = active_games.get(game_id)
-                if not game:
-                    continue
-                opponent = game["black"] if websocket == game["white"] else game["white"]
-                try:
+                if game:
+                    opponent = game["black"] if websocket == game["white"] else game["white"]
                     await opponent.send(json.dumps({
                         "type": "move",
                         "fr": data["fr"], "fc": data["fc"],
                         "tr": data["tr"], "tc": data["tc"],
                         "promotion": data.get("promotion", "--")
                     }))
-                except Exception as e:
-                    logger.error(f"Error forwarding move: {e}")
 
             elif msg_type == "resign":
                 game_id = player_games.get(id(websocket))
-                if not game_id:
-                    continue
                 game = active_games.get(game_id)
                 if game:
                     opponent = game["black"] if websocket == game["white"] else game["white"]
-                    try:
-                        await opponent.send(json.dumps({"type": "opponent_resigned"}))
-                    except:
-                        pass
+                    await opponent.send(json.dumps({"type": "opponent_resigned"}))
 
-    except websockets.exceptions.ConnectionClosed:
-        logger.info("Connection closed")
     except Exception as e:
         logger.error(f"Error: {e}")
     finally:
@@ -98,11 +76,10 @@ async def handle_client(websocket):
 
 
 async def main():
-    logger.info(f"Chess server starting on port {PORT}")
-    async with websockets.serve(handle_client, "0.0.0.0", PORT):
-        logger.info(f"Server running on port {PORT}")
-        await asyncio.Future()
+    logger.info(f"Starting server on port {PORT}")
+    server = await websockets.serve(handle_client, "0.0.0.0", PORT)
+    logger.info(f"Server is running!")
+    await server.wait_closed()
 
 
-if __name__ == "__main__":
-    asyncio.run(main())
+asyncio.run(main())
